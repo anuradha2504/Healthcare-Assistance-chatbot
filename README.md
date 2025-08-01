@@ -21,6 +21,7 @@ healthcare_chatbot/
 └── README.md # This file
 
 **How It Works**
+
 Uses OpenAI's gpt-4 or gpt-3.5-turbo model via API.
 
 A system prompt instructs the chatbot to only handle healthcare-related queries.
@@ -29,7 +30,8 @@ If users ask non-health questions, it politely declines.
 
 Messages are stored in chat_history.pkl using Python’s pickle module.
 
-Ex**ample Interactions**
+**Example Interactions**
+
 User: What are the symptoms of vitamin D deficiency?
 Bot: Common symptoms include fatigue, bone pain, muscle weakness...
 
