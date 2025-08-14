@@ -11,7 +11,7 @@ Original file is located at
 import streamlit as st
 import os
 import pickle
-from chatbot import get_healthcare_response
+#from chatbot import get_healthcare_response
 
 st.set_page_config(page_title="Healthcare Chatbot", page_icon="💬")
 st.title("💬 Healthcare Assistant Chatbot")
