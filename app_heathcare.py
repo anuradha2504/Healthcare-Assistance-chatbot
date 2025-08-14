@@ -8,51 +8,198 @@ Original file is located at
 """
 
 
-import streamlit as st
+# app.py
+# Healthcare-only chatbot: OpenAI + Streamlit + Pickle + dotenv
+# Run: streamlit run app.py
+
 import os
 import pickle
-#from chatbot import get_healthcare_response
+from typing import List, Dict
 
-st.set_page_config(page_title="Healthcare Chatbot", page_icon="💬")
-st.title("💬 Healthcare Assistant Chatbot")
-st.markdown("Ask health-related questions (e.g., symptoms, wellness, nutrition).")
+import streamlit as st
+from dotenv import load_dotenv
 
+# OpenAI SDK v1.x
+try:
+    from openai import OpenAI
+except ImportError:
+    raise SystemExit(
+        "openai package not found. Install dependencies first:\n\n"
+        "  pip install -r requirements.txt\n"
+    )
+
+# --------------------------
+# Config & constants
+# --------------------------
 HISTORY_FILE = "Healthcare_chatbot.pkl"
+DEFAULT_MODEL = "gpt-4o-mini"  # good quality/cost for chat
+HEALTH_REFUSAL = (
+    "I'm sorry, I can only assist with healthcare-related topics such as "
+    "symptoms, general health education, nutrition, first aid, mental health, "
+    "preventive care, exercise, and wellness."
+)
 
-# Load saved chat history if exists
-def load_history():
+SYSTEM_PROMPT = """
+You are a professional healthcare assistant AI for general health education.
+Scope: symptoms, common conditions, medications (general info), nutrition, fitness,
+first-aid, preventive care, mental health, checkups, and wellness.
+
+Hard rule: If the user asks for anything outside healthcare, briefly refuse and
+redirect back to health topics. Never provide diagnosis or treatment; you are not
+a doctor. Encourage consulting licensed professionals for personal or urgent issues.
+Be concise, empathetic, and evidence-informed.
+"""
+
+HEALTH_KEYWORDS = [
+    "health", "symptom", "symptoms", "disease", "condition", "medicine",
+    "medication", "drug", "treatment", "first aid", "injury", "diet",
+    "nutrition", "vitamin", "exercise", "workout", "fitness", "wellness",
+    "mental", "stress", "anxiety", "sleep", "fever", "cough", "blood pressure",
+    "diabetes", "cholesterol", "pain", "doctor", "physician", "clinic",
+    "vaccine", "immunity", "infection", "allergy", "asthma", "cold", "flu",
+]
+
+# --------------------------
+# Utils: storage
+# --------------------------
+def load_history() -> List[Dict[str, str]]:
     if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "rb") as f:
-            return pickle.load(f)
+        try:
+            with open(HISTORY_FILE, "rb") as f:
+                data = pickle.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
     return []
 
-# Save chat history to file
-def save_history(history):
-    with open(HISTORY_FILE, "wb") as f:
-        pickle.dump(history, f)
+def save_history(messages: List[Dict[str, str]]) -> None:
+    try:
+        with open(HISTORY_FILE, "wb") as f:
+            pickle.dump(messages, f)
+    except Exception:
+        pass
 
-# Initialize session
+def clear_history() -> None:
+    st.session_state.messages = []
+    try:
+        if os.path.exists(HISTORY_FILE):
+            os.remove(HISTORY_FILE)
+    except Exception:
+        pass
+
+# --------------------------
+# Guardrail: basic topic filter
+# --------------------------
+def is_health_related(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in HEALTH_KEYWORDS)
+
+# --------------------------
+# OpenAI client
+# --------------------------
+def get_client() -> OpenAI:
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        st.error("OPENAI_API_KEY missing. Create a .env file with your key.")
+        st.stop()
+    client = OpenAI()
+    return client
+
+def get_openai_reply(client: OpenAI, model: str, messages: List[Dict[str, str]], temperature: float = 0.6) -> str:
+    # Prepend system prompt each turn to keep behavior tight
+    final_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=final_messages,
+            temperature=temperature,
+            max_tokens=700,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error: {e}"
+
+# --------------------------
+# Streamlit UI
+# --------------------------
+st.set_page_config(page_title="Healthcare Chatbot", page_icon="🩺", layout="centered")
+
+st.title("🩺 Healthcare Chatbot")
+st.caption("General health education only • Not medical advice • Powered by OpenAI")
+
+with st.sidebar:
+    st.header("Settings")
+    model = st.selectbox(
+        "Model",
+        options=[DEFAULT_MODEL, "gpt-4o", "gpt-4.1-mini", "gpt-4.1"],
+        index=0,
+        help="Choose the model for responses."
+    )
+    temperature = st.slider("Creativity (temperature)", 0.0, 1.0, 0.6, 0.05)
+
+    st.divider()
+    if st.button("🗑️ Clear conversation", use_container_width=True):
+        clear_history()
+        st.rerun()
+
+    # Download history
+    if st.session_state.get("messages"):
+        hist_txt = "\n".join(
+            f"{m['role'].upper()}: {m['content']}" for m in st.session_state["messages"]
+        )
+        st.download_button(
+            "⬇️ Download chat (.txt)",
+            data=hist_txt,
+            file_name="healthcare_chat_history.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+# Initialize session state
 if "messages" not in st.session_state:
-    st.session_state["messages"] = load_history()
+    st.session_state.messages = load_history()
 
-# Display messages
-for msg in st.session_state["messages"]:
-    with st.chat_message(msg["role"]):
+# Render history
+for msg in st.session_state.messages:
+    with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
         st.markdown(msg["content"])
 
-# Input
-user_input = st.chat_input("Ask your healthcare question here...")
+# Input box
+user_input = st.chat_input("Ask a healthcare question (e.g., symptoms, nutrition, first-aid)...")
 
 if user_input:
-    st.session_state["messages"].append({"role": "user", "content": user_input})
+    # Guardrail: refuse off-topic
+    if not is_health_related(user_input):
+        assistant_reply = HEALTH_REFUSAL
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        with st.chat_message("assistant"):
+            st.markdown(assistant_reply)
+        st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
+        save_history(st.session_state.messages)
+        st.stop()
+
+    # Proceed with OpenAI call
+    st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    response = get_healthcare_response(user_input)
+    client = get_client()
+    reply = get_openai_reply(client, model=model, messages=st.session_state.messages, temperature=temperature)
 
-    st.session_state["messages"].append({"role": "assistant", "content": response})
     with st.chat_message("assistant"):
-        st.markdown(response)
+        st.markdown(reply)
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
-    # Save updated chat history
-    save_history(st.session_state["messages"])
+    # Persist
+    save_history(st.session_state.messages)
+
+# Disclaimer box
+st.info(
+    "⚠️ This chatbot provides general health information and is **not a substitute for professional medical advice**. "
+    "If you have an emergency or a personal medical concern, please contact a licensed healthcare provider.",
+    icon="⚕️",
+)
